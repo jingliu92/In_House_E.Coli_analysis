@@ -236,7 +236,7 @@ python3 1.build_presence_absence.py \
 import re
 import pandas as pd
 
-IN = "result/blast_presence_absence.tsv"
+IN = "blast_presence_absence.tsv"
 
 # ---------------------------
 # Helpers
@@ -342,46 +342,99 @@ print(f"  Saved summary: {out_class}")
 ```
 <img width="549" height="66" alt="image" src="https://github.com/user-attachments/assets/08c59201-6e1c-4e4a-8bbf-5eb017602cef" />
 
-## Separate assemblies by pathovar
+## Separate presence matrix by pathovar
 ```
-mkdir -p EHEC_assemblies EPEC_assemblies STEC_assemblies
+#!/usr/bin/env python3
+import pandas as pd
 
-while read id; do
-  find /home/jing/E.coli_test/ecoli_all -name "${id}*.fasta" -exec cp {} EHEC_assemblies/ \;
-done < EHEC_list.txt
+PA = "blast_presence_absence.tsv"
+CLASS = "pathovar_classification.tsv"
 
-while read id; do
-  find /home/jing/E.coli_test/ecoli_all -name "${id}*.fasta" -exec cp {} EPEC_assemblies/ \;
-done < EPEC_list.txt
+# load
+pa = pd.read_csv(PA, sep="\t")
+cls = pd.read_csv(CLASS, sep="\t")
 
-while read id; do
-  find /home/jing/E.coli_test/ecoli_all -name "${id}*.fasta" -exec cp {} STEC_assemblies/ \;
-done < STEC_list.txt
+# ensure columns exist
+if "Sample" not in pa.columns:
+    cand = [c for c in pa.columns if c.lower() == "sample"]
+    if not cand:
+        raise ValueError("No Sample column in blast_presence_absence.tsv")
+    pa = pa.rename(columns={cand[0]: "Sample"})
+
+# merge classification onto presence/absence table
+m = pa.merge(cls[["Sample", "pathovar"]], on="Sample", how="left")
+
+# split + save (keep rows even if pathovar missing -> goes to Other)
+m[m["pathovar"] == "EHEC"].drop(columns=["pathovar"]).to_csv("blast_presence_absence_EHEC.tsv", sep="\t", index=False)
+m[m["pathovar"] == "EPEC"].drop(columns=["pathovar"]).to_csv("blast_presence_absence_EPEC.tsv", sep="\t", index=False)
+m[m["pathovar"] == "STEC"].drop(columns=["pathovar"]).to_csv("blast_presence_absence_STEC.tsv", sep="\t", index=False)
+
+print("✅ Wrote:")
+print("  blast_presence_absence_EHEC.tsv")
+print("  blast_presence_absence_EPEC.tsv")
+print("  blast_presence_absence_STEC.tsv")
 ```
 
-## Blast EHEC
+## Count all espK/espV/espN combinations with in EHEC
+count_EHEC_esp.py
 ```
-mkdir -p blast_out_EHEC
-mkdir -p blast_hits_only_EHEC
+#!/usr/bin/env python3
+import pandas as pd
 
-for f in $(find /home/jing/E.coli/blast_results/EHEC_assemblies -name "*.fna"); do
-  folder=$(basename "$(dirname "$f")")
-  base=$(basename "$f" .fna)
-  out_file="blast_out_EHEC/${folder}_${base}_hits.tsv"
+# 1. Load your EPEC-only table
+df = pd.read_csv("blast_presence_absence_EHEC.tsv", sep="\t")
 
-  echo "Running BLAST on $folder ..."
+# 2. Boolean presence for each gene
+K = df["espK"] == 1
+V = df["espV"] == 1
+N = df["espN"] == 1
 
-  blastn -query all_markers.fasta \
-         -subject "$f" \
-         -outfmt "6 qseqid sseqid pident length qlen qstart qend sstart send evalue bitscore" \
-         | awk '{cov=($4/$5)*100; if($3>=90 && cov>=90) print $0}' > "$out_file"
+total = len(df)
 
-  # If file is non-empty (has hits), copy to hits-only folder
-  if [ -s "$out_file" ]; then
-      cp "$out_file" blast_hits_only_EHEC/
-      echo "✅ Hits found in $folder — copied to blast_hits_only_EHEC/"
-  else
-      echo "❌ No hits for $folder"
-  fi
-done
+rows = []
+
+def add(label, mask):
+    count = int(mask.sum())
+    pct = round(count / total * 100, 2) if total > 0 else 0.0
+    rows.append({"Pattern": label, "Count": count, "Percent(%)": pct})
+
+# 3. Individual genes
+add("espK(+)", K)
+add("espV(+)", V)
+add("espN(+)", N)
+
+# 4. Simple combinations (AND / OR)
+add("espK(+) AND espV(+)", K & V)
+add("espK(+) AND espN(+)", K & N)
+add("espV(+) AND espN(+)", V & N)
+add("espK(+) AND espV(+) AND espN(+)", K & V & N)
+add("espK(+) OR espV(+) OR espN(+)", K | V | N)
+
+# 5. 8 mutually exclusive patterns (K/V/N all combos)
+onlyK =  K & ~V & ~N
+onlyV = ~K &  V & ~N
+onlyN = ~K & ~V &  N
+KV    =  K &  V & ~N
+KN    =  K & ~V &  N
+VN    = ~K &  V &  N
+KVN   =  K &  V &  N
+none  = ~K & ~V & ~N
+
+add("espK only (K+ V- N-)", onlyK)
+add("espV only (K- V+ N-)", onlyV)
+add("espN only (K- V- N+)", onlyN)
+add("espK & espV (K+ V+ N-)", KV)
+add("espK & espN (K+ V- N+)", KN)
+add("espV & espN (K- V+ N+)", VN)
+add("espK & espV & espN (K+ V+ N+)", KVN)
+add("none esp (K- V- N-)", none)
+
+# 6. Make DataFrame and save / print
+summary = pd.DataFrame(rows)
+
+print(f"Total EPEC isolates: {total}\n")
+print(summary)
+
+summary.to_csv("EPEC_esp_counts_percentages.csv", index=False)
+print("\nSaved to: EPEC_esp_counts_percentages.csv")
 ```
