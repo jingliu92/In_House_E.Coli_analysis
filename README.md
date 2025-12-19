@@ -382,7 +382,7 @@ count_EHEC_esp.py
 import pandas as pd
 
 # 1. Load your EPEC-only table
-df = pd.read_csv("blast_presence_absence_EHEC.tsv", sep="\t")
+df = pd.read_csv("blast_presence_absence_EPEC.tsv", sep="\t")
 
 # 2. Boolean presence for each gene
 K = df["espK"] == 1
@@ -403,14 +403,19 @@ add("espK(+)", K)
 add("espV(+)", V)
 add("espN(+)", N)
 
-# 4. Simple combinations (AND / OR)
+# 4. OR combinations (explicit)
+add("espK(+) OR espV(+)", K | V)
+add("espK(+) OR espN(+)", K | N)      # 🔹 added
+add("espV(+) OR espN(+)", V | N)
+add("espK(+) OR espV(+) OR espN(+)", K | V | N)
+
+# 5. AND combinations
 add("espK(+) AND espV(+)", K & V)
 add("espK(+) AND espN(+)", K & N)
 add("espV(+) AND espN(+)", V & N)
 add("espK(+) AND espV(+) AND espN(+)", K & V & N)
-add("espK(+) OR espV(+) OR espN(+)", K | V | N)
 
-# 5. 8 mutually exclusive patterns (K/V/N all combos)
+# 6. 8 mutually exclusive patterns
 onlyK =  K & ~V & ~N
 onlyV = ~K &  V & ~N
 onlyN = ~K & ~V &  N
@@ -429,7 +434,7 @@ add("espV & espN (K- V+ N+)", VN)
 add("espK & espV & espN (K+ V+ N+)", KVN)
 add("none esp (K- V- N-)", none)
 
-# 6. Make DataFrame and save / print
+# 7. Output
 summary = pd.DataFrame(rows)
 
 print(f"Total EPEC isolates: {total}\n")
@@ -437,4 +442,14 @@ print(summary)
 
 summary.to_csv("EPEC_esp_counts_percentages.csv", index=False)
 print("\nSaved to: EPEC_esp_counts_percentages.csv")
+```
+<img width="461" height="342" alt="image" src="https://github.com/user-attachments/assets/4ebab965-6b36-45af-99e3-7b370ba7f5cc" />
+<img width="459" height="341" alt="image" src="https://github.com/user-attachments/assets/ac28a473-36b2-4c98-9509-634aa4af2a6e" />
+<img width="451" height="333" alt="image" src="https://github.com/user-attachments/assets/75971c5f-2e67-4702-bc12-f0b4e63076dc" />
+
+# Serotyping with ectyper
+```
+ectyper -i ecoli_all/*.fasta -o serotye
+
+## EHEC
 ```
